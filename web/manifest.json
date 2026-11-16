@@ -1,6 +1,6 @@
 {
-    "name": "project_pcvk",
-    "short_name": "project_pcvk",
+    "name": "stroke_detection",
+    "short_name": "stroke_detection",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

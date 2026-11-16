@@ -1,6 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Izin untuk Kamera dan Galeri Gambar -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+
     <application
-        android:label="project_pcvk"
+        android:label="stroke_detection"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

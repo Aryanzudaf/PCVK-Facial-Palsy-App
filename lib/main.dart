@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
 
 void main() {
@@ -59,6 +61,9 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
   String _recommendation =
       'Silakan ambil atau pilih foto wajah untuk memulai deteksi awal.';
   bool _hasResult = false;
+
+  // Endpoint API Backend (Google Colab via Ngrok)
+  String _apiEndpoint = 'https://handiness-scooter-aspire.ngrok-free.dev/predict';
 
   // Fungsi untuk mengambil gambar dari Kamera
   Future<void> _pickImageFromCamera() async {
@@ -127,36 +132,124 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
     }
   }
 
-  // Fungsi simulasi analisis klasifikasi gejala stroke
+  // Fungsi analisis klasifikasi gejala stroke via REST API backend
   Future<void> _runClassification() async {
-    if (_imageBytes == null) {
+    if (_imageBytes == null && _selectedImage == null) {
       _showSnackBar('Pilih atau ambil gambar terlebih dahulu!');
       return;
     }
 
     setState(() {
       _isAnalyzing = true;
-      _statusText = 'Sedang Menganalisis...';
+      _statusText = 'Mengirim gambar ke server AI...';
       _statusColor = const Color(0xFFD97706);
     });
 
-    // Simulasi proses analisis AI / pemrosesan citra selama 2 detik
-    await Future.delayed(const Duration(seconds: 2));
+    try {
+      final uri = Uri.parse(_apiEndpoint);
+      final request = http.MultipartRequest('POST', uri);
 
-    if (!mounted) return;
+      // Header untuk melewati peringatan awal ngrok free
+      request.headers['ngrok-skip-browser-warning'] = 'true';
 
-    setState(() {
-      _isAnalyzing = false;
-      _hasResult = true;
-      _statusText = 'Selesai Dianalisis';
-      _statusColor = const Color(0xFF059669); // Hijau sukses
-      _predictionLabel = 'Indikasi Asimetri Wajah (Suspek Stroke Awal)';
-      _confidenceScore = '87.4%';
-      _recommendation =
-          'Sistem mendeteksi kemungkinan sudut bibir/kelopak mata tidak simetris (Facial Droop). Segera lakukan pemeriksaan lebih lanjut ke fasilitas kesehatan terdekat (Metode F.A.S.T).';
-    });
+      if (kIsWeb || _selectedImage == null) {
+        request.files.add(
+          http.MultipartFile.fromBytes(
+            'image',
+            _imageBytes!,
+            filename: 'face_upload.jpg',
+          ),
+        );
+      } else {
+        request.files.add(
+          await http.MultipartFile.fromPath(
+            'image',
+            _selectedImage!.path,
+            filename: _selectedImage!.name,
+          ),
+        );
+      }
 
-    _showSnackBar('Analisis citra selesai!');
+      setState(() {
+        _statusText = 'Model AI sedang menganalisis wajah...';
+      });
+
+      final streamedResponse =
+          await request.send().timeout(const Duration(seconds: 45));
+      final response = await http.Response.fromStream(streamedResponse);
+
+      if (!mounted) return;
+
+      if (response.statusCode == 200) {
+        final Map<String, dynamic> data = jsonDecode(response.body);
+
+        if (data['status'] == 'success') {
+          final int hasil = data['hasil_klasifikasi'] ?? 0;
+          final String labelTeks = data['label_teks'] ??
+              (hasil == 1 ? 'Unhealthy / Paralisis' : 'Healthy / Normal');
+          final int executionTime = data['waktu_eksekusi_ms'] ?? 0;
+          final int faceCount = data['jumlah_wajah_terdeteksi'] ?? 1;
+
+          setState(() {
+            _isAnalyzing = false;
+            _hasResult = true;
+            _statusText = 'Selesai Dianalisis ($executionTime ms)';
+            _predictionLabel = labelTeks;
+
+            if (hasil == 1) {
+              _statusColor = const Color(0xFFDC2626); // Merah peringatan
+              _confidenceScore = 'Positif ($faceCount wajah)';
+              _recommendation =
+                  'Sistem mendeteksi adanya asimetri wajah yang mengindikasikan Facial Palsy / Kelumpuhan Wajah. Segera konsultasikan ke dokter atau fasilitas kesehatan.';
+            } else {
+              _statusColor = const Color(0xFF059669); // Hijau sehat
+              _confidenceScore = 'Negatif ($faceCount wajah)';
+              _recommendation =
+                  'Wajah terdeteksi simetris dan dalam kondisi normal. Tidak ditemukan indikasi Facial Palsy.';
+            }
+          });
+          _showSnackBar('Analisis citra berhasil!');
+        } else {
+          final String errorMsg =
+              data['error_message'] ?? 'Gagal memproses gambar.';
+          setState(() {
+            _isAnalyzing = false;
+            _hasResult = false;
+            _statusText = 'Analisis Gagal';
+            _statusColor = const Color(0xFFDC2626);
+            _predictionLabel = 'Wajah Tidak Terdeteksi';
+            _confidenceScore = 'Error';
+            _recommendation = errorMsg;
+          });
+          _showSnackBar(errorMsg);
+        }
+      } else {
+        setState(() {
+          _isAnalyzing = false;
+          _hasResult = false;
+          _statusText = 'Error Server (${response.statusCode})';
+          _statusColor = const Color(0xFFDC2626);
+          _predictionLabel = 'Gagal Terhubung';
+          _confidenceScore = 'Error';
+          _recommendation =
+              'Server mengembalikan kode status ${response.statusCode}: ${response.body}';
+        });
+        _showSnackBar('Server error: ${response.statusCode}');
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isAnalyzing = false;
+        _hasResult = false;
+        _statusText = 'Gagal Menghubungi Server';
+        _statusColor = const Color(0xFFDC2626);
+        _predictionLabel = 'Koneksi Gagal';
+        _confidenceScore = 'Error';
+        _recommendation =
+            'Tidak dapat menghubungi backend ($e). Pastikan Google Colab masih berjalan dan URL Ngrok sesuai.';
+      });
+      _showSnackBar('Koneksi ke backend gagal: $e');
+    }
   }
 
   // Fungsi untuk mereset / menghapus gambar
@@ -227,6 +320,71 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
     );
   }
 
+  // Dialog untuk melihat atau mengubah URL Backend API
+  void _showApiSettingsDialog() {
+    final TextEditingController urlController =
+        TextEditingController(text: _apiEndpoint);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.cloud_sync, color: Color(0xFF00796B)),
+            SizedBox(width: 8),
+            Text('URL Server Backend', style: TextStyle(fontSize: 17)),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Masukkan URL endpoint /predict dari Google Colab / Ngrok:',
+              style: TextStyle(fontSize: 12, color: Colors.black87),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: urlController,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: 'https://xxxx.ngrok-free.dev/predict',
+                labelText: 'URL API Endpoint',
+                isDense: true,
+              ),
+              style: const TextStyle(fontSize: 13),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              '*Jika Colab direstart dan URL Ngrok berganti, Anda cukup menggantinya di sini tanpa perlu compile ulang.',
+              style: TextStyle(fontSize: 11, color: Colors.black54, fontStyle: FontStyle.italic),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('Batal'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF00796B),
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () {
+              setState(() {
+                _apiEndpoint = urlController.text.trim();
+              });
+              Navigator.of(ctx).pop();
+              _showSnackBar('URL API berhasil diperbarui!');
+            },
+            child: const Text('Simpan'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -236,6 +394,11 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
           style: TextStyle(fontWeight: FontWeight.w600, fontSize: 18),
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.link),
+            tooltip: 'Ganti URL Server API',
+            onPressed: _showApiSettingsDialog,
+          ),
           IconButton(
             icon: const Icon(Icons.info_outline),
             tooltip: 'Tentang F.A.S.T',

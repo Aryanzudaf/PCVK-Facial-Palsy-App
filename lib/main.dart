@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
@@ -67,9 +68,10 @@ class _SplashScreenState extends State<SplashScreen>
       duration: const Duration(milliseconds: 1400),
     );
 
-    _fadeAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(parent: _animController, curve: Curves.easeIn),
-    );
+    _fadeAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(parent: _animController, curve: Curves.easeIn));
 
     _scaleAnimation = Tween<double>(begin: 0.82, end: 1.0).animate(
       CurvedAnimation(parent: _animController, curve: Curves.easeOutBack),
@@ -224,7 +226,9 @@ class _SplashScreenState extends State<SplashScreen>
                         child: SizedBox(
                           height: 4,
                           child: LinearProgressIndicator(
-                            backgroundColor: Colors.white.withValues(alpha: 0.2),
+                            backgroundColor: Colors.white.withValues(
+                              alpha: 0.2,
+                            ),
                             valueColor: const AlwaysStoppedAnimation<Color>(
                               Color(0xFF80CBC4),
                             ),
@@ -296,7 +300,7 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
   Uint8List? _imageBytes;
 
   // Konfigurasi Server API (Backend Colab Ngrok / Localhost)
-  String _serverUrl = 'https://handiness-scooter-aspire.ngrok-free.dev/predict';
+  String _serverUrl = 'https://undone-print-vocalist.ngrok-free.dev/predict';
   bool _useServerApi = true;
 
   // State Hasil Analisis
@@ -331,8 +335,7 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
           _predictionLabel = '- (Tekan tombol "Mulai Analisis Deteksi") -';
           _confidenceScore = '-- %';
           _asymmetryScore = '';
-          _recommendation =
-              'Foto berhasil diambil. Tekan tombol di bawah untuk mengirim dan memproses gambar.';
+          _recommendation = 'Foto berhasil diambil. Tekan tombol di bawah untuk mengirim dan memproses gambar.';
         });
 
         _showSnackBar('Foto berhasil diambil dari kamera!');
@@ -368,8 +371,7 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
           _predictionLabel = '- (Tekan tombol "Mulai Analisis Deteksi") -';
           _confidenceScore = '-- %';
           _asymmetryScore = '';
-          _recommendation =
-              'Gambar berhasil dipilih. Tekan tombol di bawah untuk mengirim dan memproses gambar.';
+          _recommendation = 'Gambar berhasil dipilih. Tekan tombol di bawah untuk mengirim dan memproses gambar.';
         });
 
         _showSnackBar('Gambar berhasil dipilih dari galeri!');
@@ -389,8 +391,9 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
 
     setState(() {
       _isAnalyzing = true;
-      _statusText =
-          _useServerApi ? 'Mengirim Gambar ke Server...' : 'Menganalisis Citra...';
+      _statusText = _useServerApi
+          ? 'Mengirim Gambar ke Server...'
+          : 'Menganalisis Citra...';
       _statusColor = const Color(0xFFD97706);
     });
 
@@ -416,23 +419,76 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
         final response = await http.Response.fromStream(streamedResponse);
 
         if (response.statusCode == 200) {
+          debugPrint('Response API: ${response.body}');
           final Map<String, dynamic> data = jsonDecode(response.body);
 
-          final String label =
-              data['label_teks'] ?? data['label'] ?? 'Hasil Analisis Selesai';
-          final dynamic confVal = data['confidence'];
-          final dynamic execTime = data['waktu_eksekusi_ms'];
-          final String confidence = confVal != null
-              ? '$confVal%'
-              : (execTime != null ? 'Waktu: ${execTime}ms' : '91.2%');
+          final dynamic rawLabel = data['label_teks'] ?? data['label'];
           final dynamic hasilKlasifikasi = data['hasil_klasifikasi'];
-          final bool isSuspect = hasilKlasifikasi == 1 ||
+
+          // 1. Tangani kasus wajah tidak terdeteksi / tidak ada label dari server
+          if (rawLabel == null && hasilKlasifikasi == null) {
+            final String serverMsg =
+                data['error']?.toString() ??
+                data['message']?.toString() ??
+                'Wajah tidak terdeteksi dengan jelas. Pastikan seluruh wajah menghadap lurus ke kamera.';
+
+            if (!mounted) return;
+            setState(() {
+              _isAnalyzing = false;
+              _hasResult = false;
+              _isSuspect = false;
+              _statusText = 'Wajah Tidak Terdeteksi';
+              _statusColor = const Color(0xFFD97706);
+              _predictionLabel = 'Gagal Mendeteksi Wajah';
+              _confidenceScore = '-- %';
+              _asymmetryScore = '';
+              _recommendation = serverMsg;
+            });
+            _showSnackBar('Wajah tidak terdeteksi, coba ambil foto ulang.');
+            return;
+          }
+
+          // 2. Format nilai confidence (jika 0.0 - 1.0, kalikan 100)
+          final dynamic confVal = data['confidence'];
+          String confidence = '-- %';
+          if (confVal != null) {
+            final double? parsedConf = double.tryParse(confVal.toString());
+            if (parsedConf != null) {
+              final double pct = parsedConf <= 1.0
+                  ? parsedConf * 100
+                  : parsedConf;
+              confidence = '${pct.toStringAsFixed(2)}%';
+            } else {
+              confidence = '$confVal%';
+            }
+          }
+
+          // 3. Tentukan status suspek & label
+          final bool isSuspect =
+              hasilKlasifikasi == 1 ||
+              hasilKlasifikasi?.toString() == '1' ||
+              rawLabel == 1 ||
               data['is_stroke_suspect'] == true ||
-              label.toLowerCase().contains('unhealthy') ||
-              label.toLowerCase().contains('paralisis') ||
-              label.toLowerCase().contains('stroke') ||
-              label.toLowerCase().contains('asimetri');
-          final String rec = data['recommendation'] ??
+              (rawLabel?.toString().toLowerCase().contains('unhealthy') ??
+                  false) ||
+              (rawLabel?.toString().toLowerCase().contains('paralisis') ??
+                  false) ||
+              (rawLabel?.toString().toLowerCase().contains('stroke') ??
+                  false) ||
+              (rawLabel?.toString().toLowerCase().contains('asimetri') ??
+                  false);
+
+          String label;
+          if (rawLabel is int || rawLabel == null) {
+            label = isSuspect
+                ? 'Indikasi Facial Palsy / Asimetri Wajah'
+                : 'Normal / Sehat (Simetris)';
+          } else {
+            label = rawLabel.toString();
+          }
+
+          final String rec =
+              data['recommendation']?.toString() ??
               (isSuspect
                   ? 'Terindikasi kemungkinan Facial Palsy / Asimetri Wajah (Metode F.A.S.T).'
                   : 'Kondisi fitur simetri wajah tampak normal / sehat (Healthy).');
@@ -444,8 +500,9 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
             _hasResult = true;
             _isSuspect = isSuspect;
             _statusText = 'Berhasil Dianalisis (Server API)';
-            _statusColor =
-                isSuspect ? const Color(0xFFDC2626) : const Color(0xFF059669);
+            _statusColor = isSuspect
+                ? const Color(0xFFDC2626)
+                : const Color(0xFF059669);
             _predictionLabel = label;
             _confidenceScore = confidence;
             _asymmetryScore = asymVal != null ? 'Skor Asimetri: $asymVal' : '';
@@ -480,8 +537,7 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
       _predictionLabel = 'Indikasi Asimetri Wajah (Suspek Stroke Awal)';
       _confidenceScore = '88.7%';
       _asymmetryScore = 'Skor Deviasi Asimetri: 0.38';
-      _recommendation =
-          'Sistem mendeteksi kemungkinan sudut bibir/kelopak mata tidak simetris (Facial Droop). Segera lakukan pemeriksaan medis darurat (Metode F.A.S.T).';
+      _recommendation = 'Sistem mendeteksi kemungkinan sudut bibir/kelopak mata tidak simetris (Facial Droop). Segera lakukan pemeriksaan medis darurat (Metode F.A.S.T).';
     });
 
     _showSnackBar('Analisis citra selesai!');
@@ -519,8 +575,9 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
 
   // 5. DIALOG PENGATURAN SERVER API
   void _showServerSettingsDialog() {
-    final TextEditingController urlController =
-        TextEditingController(text: _serverUrl);
+    final TextEditingController urlController = TextEditingController(
+      text: _serverUrl,
+    );
     bool tempUseServer = _useServerApi;
 
     showDialog(
@@ -629,17 +686,25 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('• F (Face Drooping): Wajah tampak tidak simetris atau terkulai di satu sisi.',
-                style: TextStyle(fontSize: 13, height: 1.4)),
+            Text(
+              '• F (Face Drooping): Wajah tampak tidak simetris atau terkulai di satu sisi.',
+              style: TextStyle(fontSize: 13, height: 1.4),
+            ),
             SizedBox(height: 6),
-            Text('• A (Arm Weakness): Kelemahan pada salah satu lengan atau sulit diangkat.',
-                style: TextStyle(fontSize: 13, height: 1.4)),
+            Text(
+              '• A (Arm Weakness): Kelemahan pada salah satu lengan atau sulit diangkat.',
+              style: TextStyle(fontSize: 13, height: 1.4),
+            ),
             SizedBox(height: 6),
-            Text('• S (Speech Difficulty): Bicara pelo, tidak jelas, atau sulit berbicara.',
-                style: TextStyle(fontSize: 13, height: 1.4)),
+            Text(
+              '• S (Speech Difficulty): Bicara pelo, tidak jelas, atau sulit berbicara.',
+              style: TextStyle(fontSize: 13, height: 1.4),
+            ),
             SizedBox(height: 6),
-            Text('• T (Time to call): Waktu sangat kritis, segera cari bantuan medis darurat.',
-                style: TextStyle(fontSize: 13, height: 1.4)),
+            Text(
+              '• T (Time to call): Waktu sangat kritis, segera cari bantuan medis darurat.',
+              style: TextStyle(fontSize: 13, height: 1.4),
+            ),
           ],
         ),
         actions: [
@@ -681,7 +746,10 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
             children: [
               // Kartu Status Mode
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: _useServerApi
                       ? const Color(0xFFECFDF5)
@@ -738,7 +806,11 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
                   padding: EdgeInsets.all(12.0),
                   child: Row(
                     children: [
-                      Icon(Icons.health_and_safety, color: Color(0xFF00796B), size: 28),
+                      Icon(
+                        Icons.health_and_safety,
+                        color: Color(0xFF00796B),
+                        size: 28,
+                      ),
                       SizedBox(width: 12),
                       Expanded(
                         child: Text(
@@ -772,7 +844,11 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
                   if (_imageBytes != null)
                     TextButton.icon(
                       onPressed: _resetImage,
-                      icon: const Icon(Icons.refresh, size: 16, color: Colors.redAccent),
+                      icon: const Icon(
+                        Icons.refresh,
+                        size: 16,
+                        color: Colors.redAccent,
+                      ),
                       label: const Text(
                         'Hapus / Ganti',
                         style: TextStyle(fontSize: 12, color: Colors.redAccent),
@@ -807,10 +883,7 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
                       ? Stack(
                           fit: StackFit.expand,
                           children: [
-                            Image.memory(
-                              _imageBytes!,
-                              fit: BoxFit.cover,
-                            ),
+                            Image.memory(_imageBytes!, fit: BoxFit.cover),
                             Positioned(
                               bottom: 0,
                               left: 0,
@@ -902,7 +975,10 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
                       label: const Text('Pilih Gambar'),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: const Color(0xFF00796B),
-                        side: const BorderSide(color: Color(0xFF00796B), width: 1.5),
+                        side: const BorderSide(
+                          color: Color(0xFF00796B),
+                          width: 1.5,
+                        ),
                         padding: const EdgeInsets.symmetric(vertical: 14),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(12),
@@ -934,8 +1010,8 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
                   _isAnalyzing
                       ? 'Sedang Memproses Citra...'
                       : (_useServerApi
-                          ? 'Kirim & Analisis ke Server'
-                          : 'Mulai Analisis Deteksi'),
+                            ? 'Kirim & Analisis ke Server'
+                            : 'Mulai Analisis Deteksi'),
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 style: ElevatedButton.styleFrom(
@@ -971,8 +1047,8 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
                   border: Border.all(
                     color: _hasResult
                         ? (_isSuspect
-                            ? const Color(0xFFFCA5A5)
-                            : const Color(0xFFA7F3D0))
+                              ? const Color(0xFFFCA5A5)
+                              : const Color(0xFFA7F3D0))
                         : const Color(0xFFE2E8F0),
                   ),
                   boxShadow: [
@@ -1020,10 +1096,7 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
 
                     const Text(
                       'Prediksi Label:',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Color(0xFF64748B),
-                      ),
+                      style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
                     ),
                     const SizedBox(height: 4),
                     Text(
@@ -1033,8 +1106,8 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
                         fontWeight: FontWeight.bold,
                         color: _hasResult
                             ? (_isSuspect
-                                ? const Color(0xFFDC2626)
-                                : const Color(0xFF059669))
+                                  ? const Color(0xFFDC2626)
+                                  : const Color(0xFF059669))
                             : const Color(0xFF334155),
                       ),
                     ),
@@ -1057,8 +1130,8 @@ class _StrokeDetectionHomePageState extends State<StrokeDetectionHomePage> {
                             fontWeight: FontWeight.bold,
                             color: _hasResult
                                 ? (_isSuspect
-                                    ? const Color(0xFFDC2626)
-                                    : const Color(0xFF059669))
+                                      ? const Color(0xFFDC2626)
+                                      : const Color(0xFF059669))
                                 : const Color(0xFF334155),
                           ),
                         ),
